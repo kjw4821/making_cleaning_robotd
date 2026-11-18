@@ -24,11 +24,16 @@ public class RobotController : MonoBehaviour
     public RobotDirection Direction { get; private set; } = RobotDirection.Right;
     public bool IsBusy { get; private set; }
     public bool IsInitialized { get; private set; }
+    public bool IsAutomatic => automaticRules != null;
+    public int RemainingDust => IsInitialized ? mapManager.RemainingDust : 0;
+    public bool IsCleared => IsInitialized && RemainingDust == 0;
+    public float RuleInterval => ruleInterval;
     public Vector3Int ForwardCell => CurrentCell + GetDirectionOffset(Direction);
 
     private void Start()
     {
-        ResetToStart();
+        if (ResetToStart())
+            gameObject.AddComponent<RobotRunHud>().Initialize(this);
     }
 
 #if UNITY_EDITOR
@@ -78,6 +83,7 @@ public class RobotController : MonoBehaviour
 
         PauseAutomaticRules();
         StopAllCoroutines();
+        mapManager.RestoreDust();
         CurrentCell = startCell;
         transform.position = mapManager.GetCellCenterWorld(startCell);
         visual.localPosition = Vector3.zero;
@@ -141,10 +147,15 @@ public class RobotController : MonoBehaviour
 
     public void StartAutomaticRules()
     {
-        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || automaticRules != null)
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsCleared || IsAutomatic)
             return;
 
         automaticRules = StartCoroutine(RunAutomaticRules());
+    }
+
+    public void AdjustRuleInterval(float change)
+    {
+        ruleInterval = Mathf.Clamp(ruleInterval + change, 0.05f, 2f);
     }
 
     public void PauseAutomaticRules()
@@ -158,7 +169,8 @@ public class RobotController : MonoBehaviour
 
     private IEnumerator RunAutomaticRules()
     {
-        while (true)
+        yield return null;
+        while (!IsCleared)
         {
             while (IsBusy)
                 yield return null;
@@ -168,13 +180,18 @@ public class RobotController : MonoBehaviour
             while (IsBusy)
                 yield return null;
 
+            if (IsCleared)
+                break;
+
             yield return new WaitForSeconds(Mathf.Max(0.01f, ruleInterval));
         }
+
+        automaticRules = null;
     }
 
     private bool RunRuleStep()
     {
-        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsBusy)
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsBusy || IsCleared)
             return false;
 
         if (mapManager.HasDust(CurrentCell))

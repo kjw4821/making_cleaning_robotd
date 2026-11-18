@@ -16,6 +16,9 @@ public class RobotController : MonoBehaviour
     [SerializeField] private Transform robotStart;
     [SerializeField] private Transform visual;
     [SerializeField, Min(0.01f)] private float moveDuration = 0.25f;
+    [SerializeField, Min(0.01f)] private float ruleInterval = 0.25f;
+
+    private Coroutine automaticRules;
 
     public Vector3Int CurrentCell { get; private set; }
     public RobotDirection Direction { get; private set; } = RobotDirection.Right;
@@ -32,8 +35,29 @@ public class RobotController : MonoBehaviour
     private void Update()
     {
         var keyboard = UnityEngine.InputSystem.Keyboard.current;
-        if (keyboard != null && keyboard.spaceKey.wasPressedThisFrame)
+        if (keyboard == null)
+            return;
+
+        if (keyboard.pKey.wasPressedThisFrame)
+        {
+            if (automaticRules == null)
+                StartAutomaticRules();
+            else
+                PauseAutomaticRules();
+            return;
+        }
+
+        if (automaticRules != null)
+            return;
+
+        if (keyboard.nKey.wasPressedThisFrame)
+            TryRunRuleStep();
+        else if (keyboard.spaceKey.wasPressedThisFrame)
             TryMoveForward();
+        else if (keyboard.rKey.wasPressedThisFrame)
+            TryTurnRight();
+        else if (keyboard.cKey.wasPressedThisFrame)
+            TryClean();
     }
 #endif
 
@@ -52,6 +76,7 @@ public class RobotController : MonoBehaviour
             return false;
         }
 
+        PauseAutomaticRules();
         StopAllCoroutines();
         CurrentCell = startCell;
         transform.position = mapManager.GetCellCenterWorld(startCell);
@@ -100,12 +125,85 @@ public class RobotController : MonoBehaviour
 
     private void OnDisable()
     {
+        PauseAutomaticRules();
         if (!IsBusy)
             return;
 
         StopAllCoroutines();
         transform.position = mapManager.GetCellCenterWorld(CurrentCell);
         IsBusy = false;
+    }
+
+    public bool TryRunRuleStep()
+    {
+        return automaticRules == null && RunRuleStep();
+    }
+
+    public void StartAutomaticRules()
+    {
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || automaticRules != null)
+            return;
+
+        automaticRules = StartCoroutine(RunAutomaticRules());
+    }
+
+    public void PauseAutomaticRules()
+    {
+        if (automaticRules == null)
+            return;
+
+        StopCoroutine(automaticRules);
+        automaticRules = null;
+    }
+
+    private IEnumerator RunAutomaticRules()
+    {
+        while (true)
+        {
+            while (IsBusy)
+                yield return null;
+
+            RunRuleStep();
+
+            while (IsBusy)
+                yield return null;
+
+            yield return new WaitForSeconds(Mathf.Max(0.01f, ruleInterval));
+        }
+    }
+
+    private bool RunRuleStep()
+    {
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsBusy)
+            return false;
+
+        if (mapManager.HasDust(CurrentCell))
+            return TryClean();
+
+        if (!mapManager.CanMoveTo(ForwardCell))
+            return TryTurnRight();
+
+        return TryMoveForward();
+    }
+
+    public bool TryClean()
+    {
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsBusy)
+            return false;
+
+        return mapManager.TryRemoveDust(CurrentCell);
+    }
+
+    public bool TryTurnRight()
+    {
+        if (!Application.isPlaying || !isActiveAndEnabled || !IsInitialized || IsBusy)
+            return false;
+
+        RobotDirection nextDirection = Direction == RobotDirection.Up
+            ? RobotDirection.Right
+            : (RobotDirection)((int)Direction + 1);
+        SetDirection(nextDirection);
+        return true;
     }
 
     public void SetDirection(RobotDirection direction)
